@@ -200,16 +200,15 @@ function isAcceptingState(closureOutput, grammarArray) {
   return false;
 }
 
-function isReducingState(closureOutput) {
-  if (closureOutput.length === 1) {
-    let stateOutput = closureOutput[0].output;
-    let stateOutputFinalChar = stateOutput[stateOutput.length - 1];
+function isReducingState(closureOutput, grammarArray) {
+  let reduceStateArray = closureOutput.filter((state) => {
+    return (
+      state.output[state.output.length - 1] === "." &&
+      state.input !== grammarArray[0].input
+    );
+  });
 
-    if (stateOutputFinalChar === ".") {
-      return true;
-    }
-  }
-  return false;
+  return reduceStateArray.length > 0 ? true : false;
 }
 
 function performStateTransition(stateArray, grammarArray) {
@@ -259,7 +258,7 @@ function performStateTransition(stateArray, grammarArray) {
           }
 
           // checking whether the state is reducing state or not
-          if (isReducingState(closureOutputAfterGoto)) {
+          if (isReducingState(closureOutputAfterGoto, grammarArray)) {
             newState.stateType = "Reducing State";
           }
           newStateFormed.push(newState);
@@ -297,25 +296,47 @@ function constructStateArray(grammarArray) {
 
   stateArray.push(initialState);
   stateArray = performStateTransition(stateArray, grammarArray);
-  console.log("state array is: ", stateArray);
   return stateArray;
 }
 
-function computeFollowForGrammar(grammarArray,terNonTermObj) {
-  let followArray = {};
+function computeFollowForGrammar(grammarArray, terNonTermObj) {
+  let followObj = {};
 
-  followArray[grammarArray[0].input] = ["$"];
+  followObj[grammarArray[0].input] = ["$"];
 
-  for(let toFindFollowTerminal of terNonTermObj.nonTerminals) {
-    let stateContainingTerminal = grammarArray.filter( (grammarState) => {
+  for (let toFindFollowTerminal of terNonTermObj.terminals) {
+    let followOfTerminal = [];
+
+    let stateContainingTerminal = grammarArray.filter((grammarState) => {
       return grammarState.output.includes(toFindFollowTerminal);
     });
 
-    for(states of stateContainingTerminal) {
-      let indexOfTerminal
+    for (states of stateContainingTerminal) {
+      let indexOfTerminal = states.output.indexOf(toFindFollowTerminal);
+      if (indexOfTerminal === states.output.length - 1) {
+        let followOfInput = followObj[states.input];
+        for (let inputChar of followOfInput) {
+          if (!followOfTerminal.includes(inputChar)) {
+            followOfTerminal.push(inputChar);
+          }
+        }
+      } else {
+        // if for follow the input production does not lie in the end of output
+
+        // then it can either be a prouction  or lower case char
+        
+        // in case of production we need to find First
+        let nonTerminalString = states.output[++indexOfTerminal];
+        if (!followOfTerminal.includes(nonTerminalString)) {
+          followOfTerminal.push(nonTerminalString);
+        }
+      }
     }
+
+    followObj[toFindFollowTerminal] = followOfTerminal;
   }
 
+  return followObj;
 }
 
 function computeTerminalsAndNonTerminals(grammarArray) {
@@ -338,7 +359,9 @@ function computeTerminalsAndNonTerminals(grammarArray) {
         while (!isUpperCase(output[++j]) && j < output.length) {
           nonTerminal += output[j];
         }
-        obj.nonTerminals.push(nonTerminal);
+        if( !obj.nonTerminals.includes(nonTerminal)) {
+          obj.nonTerminals.push(nonTerminal);
+        }
         nonTerminal = "";
       }
     }
@@ -347,11 +370,81 @@ function computeTerminalsAndNonTerminals(grammarArray) {
   return obj;
 }
 
+function computeSlrParsingTable(stateArray, followObj, termNonTerObj,grammarArray) {
+  let parsingTableArray = [];
+
+  for (let state of stateArray) {
+    let pushActionObj = { actions: {}, gotos: {} };
+    for (const actions of termNonTerObj.nonTerminals) {
+      pushActionObj.actions[actions] = [];
+    }
+
+    for (const gotos of termNonTerObj.terminals) {
+      pushActionObj.gotos[gotos] = [];
+    }
+
+    for (const [key, value] of Object.entries(state.stateTransitions)) {
+      if (isUpperCase(key)) {
+        pushActionObj.gotos[key].push(value);
+      } else {
+        pushActionObj.actions[key].push("s" + value);
+      }
+    }
+
+    if (state.stateType === "Accepting State") {
+      pushActionObj.actions["$"].push("Accept");
+    } else if (state.stateType === "Reducing State") {
+      let arrayOfReduce = state.stateElements.filter((reduceState) => {
+        return reduceState.output[reduceState.output.length - 1] === ".";
+      });
+
+      let followToFind = arrayOfReduce[0].input;
+      let reduceOpToFind = arrayOfReduce[0].output.slice(
+        0,
+        arrayOfReduce[0].output.length-1
+      );
+      let reduceNo = grammarArray.findIndex((state) => {
+        return state.output === reduceOpToFind;
+      });
+      let followArray = followObj[followToFind];
+      for (let followChar of followArray) {
+        pushActionObj.actions[followChar].push("r" + reduceNo);
+      }
+    }
+
+    parsingTableArray.push(pushActionObj);
+  }
+  return parsingTableArray;
+}
+
 function parseInput() {
   const grammarInput = document.getElementById("grammar-input").value;
   const parsingInput = document.getElementById("parsing-input").value;
   let grammarArray = storeGrammar(grammarInput);
+  console.log("grammar array is: ",grammarArray);
   let stateArray = constructStateArray(grammarArray);
+  console.log("state array is: ", stateArray);
   let terminalNonTerminalObj = computeTerminalsAndNonTerminals(grammarArray);
-  let followObj =computeFollowForGrammar(grammarArray,terminalNonTerminalObj);
+  console.log("terminal and non-terminal obj: ",terminalNonTerminalObj);
+  let followObj = computeFollowForGrammar(grammarArray, terminalNonTerminalObj);
+  console.log("follow object is: ",followObj);
+  let slrParsingTable = computeSlrParsingTable(
+    stateArray,
+    followObj,
+    terminalNonTerminalObj,
+    grammarArray
+  );
+
+  for (let i = 0; i < slrParsingTable.length; i++) {
+    console.log("----state is: ", i);
+    console.log("actions is: ");
+    for (const [key, value] of Object.entries(slrParsingTable[i].actions)) {
+      console.log("action input is: ", key, " action output is: ", value);
+    }
+
+    console.log("gotos is: ");
+    for (const [key, value] of Object.entries(slrParsingTable[i].gotos)) {
+      console.log("goto input is: ", key, " goto output is: ", value);
+    }
+  }
 }
