@@ -324,7 +324,7 @@ function computeFollowForGrammar(grammarArray, terNonTermObj) {
         // if for follow the input production does not lie in the end of output
 
         // then it can either be a prouction  or lower case char
-        
+
         // in case of production we need to find First
         let nonTerminalString = states.output[++indexOfTerminal];
         if (!followOfTerminal.includes(nonTerminalString)) {
@@ -359,7 +359,7 @@ function computeTerminalsAndNonTerminals(grammarArray) {
         while (!isUpperCase(output[++j]) && j < output.length) {
           nonTerminal += output[j];
         }
-        if( !obj.nonTerminals.includes(nonTerminal)) {
+        if (!obj.nonTerminals.includes(nonTerminal)) {
           obj.nonTerminals.push(nonTerminal);
         }
         nonTerminal = "";
@@ -370,7 +370,12 @@ function computeTerminalsAndNonTerminals(grammarArray) {
   return obj;
 }
 
-function computeSlrParsingTable(stateArray, followObj, termNonTerObj,grammarArray) {
+function computeSlrParsingTable(
+  stateArray,
+  followObj,
+  termNonTerObj,
+  grammarArray
+) {
   let parsingTableArray = [];
 
   for (let state of stateArray) {
@@ -401,7 +406,7 @@ function computeSlrParsingTable(stateArray, followObj, termNonTerObj,grammarArra
       let followToFind = arrayOfReduce[0].input;
       let reduceOpToFind = arrayOfReduce[0].output.slice(
         0,
-        arrayOfReduce[0].output.length-1
+        arrayOfReduce[0].output.length - 1
       );
       let reduceNo = grammarArray.findIndex((state) => {
         return state.output === reduceOpToFind;
@@ -417,17 +422,113 @@ function computeSlrParsingTable(stateArray, followObj, termNonTerObj,grammarArra
   return parsingTableArray;
 }
 
+function prepareInput(parsingInput, termNonTermObj) {
+  console.log("parsing input is: ", parsingInput);
+  let toCheckString = "";
+  let inputBufferArray = [];
+  for (let char of parsingInput) {
+    toCheckString += char;
+
+    if (termNonTermObj.nonTerminals.includes(toCheckString)) {
+      inputBufferArray.push(toCheckString);
+      toCheckString = "";
+    }
+  }
+  return inputBufferArray;
+}
+
+function calculateNoOfPop(productionOutput, termNonTermObj) {
+  let toCheckString = "";
+  let totalNoOfPop = 0;
+
+  for(let i = 0; i<productionOutput.length; i++) {
+    if(!isUpperCase(productionOutput[i])) {
+      toCheckString = productionOutput[i];
+
+      while( !termNonTermObj.nonTerminals.includes(toCheckString) ) {
+        toCheckString += productionOutput[++i];
+      }
+    }
+    totalNoOfPop++;
+  }
+
+  return totalNoOfPop * 2;
+}
+
+function computeParsingTable(
+  inputBufferArray,
+  slrTable,
+  grammarArray,
+  termNonTermObj
+) {
+  let parsingTable = [];
+  let stack = ["$", 0];
+  let actionOutput = "";
+  let parsingTablePush = [];
+  while (stack.length !== 0 && actionOutput !== "Accept") {
+    let pushActionObj = { actions: {}, gotos: {} };
+
+    parsingTablePush.push(stack.join(""));
+    parsingTablePush.push(inputBufferArray.join(""));
+
+    let stackInput = stack[stack.length - 1];
+    let inputBufferInput = inputBufferArray[0];
+    actionOutput = slrTable[stackInput].actions[inputBufferInput][0];
+
+    parsingTablePush.push(
+      `[${stackInput},${inputBufferInput}]=${actionOutput}`
+    );
+
+    if (actionOutput[0] === "s") {
+      inputBufferArray.shift();
+      parsingTablePush.push("");
+      parsingTablePush.push("Shift");
+
+      stack.push(inputBufferInput);
+      stack.push(parseInt(actionOutput[1]));
+    } else if (actionOutput[0] === "r") {
+      let reduceNo = parseInt(actionOutput[1]);
+      let reducingProduction = grammarArray[reduceNo];
+      let noOfPop = calculateNoOfPop(reducingProduction.output, termNonTermObj);
+      for (let i = 1; i <= noOfPop; i++) {
+        stack.pop();
+      }
+      let gotoInput = stack[stack.length - 1];
+      let gotoOutput = slrTable[gotoInput].gotos[reducingProduction.input][0];
+      stack.push(reducingProduction.input);
+      stack.push(gotoOutput);
+
+      parsingTablePush.push(
+        `[${gotoInput},${reducingProduction.input}]=${gotoOutput}`
+      );
+      parsingTablePush.push(
+        `Reduce by ${reducingProduction.input} -> ${reducingProduction.output}`
+      );
+    } else {
+      parsingTablePush.push('');
+      parsingTablePush.push("Accept");
+    }
+
+    parsingTable.push(parsingTablePush);
+    parsingTablePush = [];
+    //console.log(parsingTable);
+  }
+
+  return parsingTable;
+}
+
 function parseInput() {
   const grammarInput = document.getElementById("grammar-input").value;
-  const parsingInput = document.getElementById("parsing-input").value;
+  let parsingInput = document.getElementById("parsing-input").value;
+  parsingInput = parsingInput + "$";
   let grammarArray = storeGrammar(grammarInput);
-  console.log("grammar array is: ",grammarArray);
+  console.log("grammar array is: ", grammarArray);
   let stateArray = constructStateArray(grammarArray);
   console.log("state array is: ", stateArray);
   let terminalNonTerminalObj = computeTerminalsAndNonTerminals(grammarArray);
-  console.log("terminal and non-terminal obj: ",terminalNonTerminalObj);
+  console.log("terminal and non-terminal obj: ", terminalNonTerminalObj);
   let followObj = computeFollowForGrammar(grammarArray, terminalNonTerminalObj);
-  console.log("follow object is: ",followObj);
+  console.log("follow object is: ", followObj);
   let slrParsingTable = computeSlrParsingTable(
     stateArray,
     followObj,
@@ -447,4 +548,18 @@ function parseInput() {
       console.log("goto input is: ", key, " goto output is: ", value);
     }
   }
+
+  console.log("slr parsing table : ", slrParsingTable);
+
+  let inputBuffer = prepareInput(parsingInput, terminalNonTerminalObj);
+  console.log("input buffer : ", inputBuffer);
+
+  let parsingTableOutput = computeParsingTable(
+    inputBuffer,
+    slrParsingTable,
+    grammarArray,
+    terminalNonTerminalObj
+  );
+
+  console.log("parsing table output: ", parsingTableOutput);
 }
